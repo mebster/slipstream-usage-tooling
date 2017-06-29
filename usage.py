@@ -13,7 +13,7 @@ clouds = ["ifb-bird-stack", "ifb-bistro-iphc", "ifb-core-pilot",
           "ifb-genouest-genostack", "ifb-prabi-girofle"]
 
 url_template = "https://nuv.la/api/usage?$filter=cloud='{cloud}' and " \
-               "frequency='weekly' and start-timestamp=2017-{month}-01"
+               "frequency='monthly' and start-timestamp=2017-{month}-01"
 url_login = "https://nuv.la/auth/login"
 
 cookies = None
