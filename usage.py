@@ -8,7 +8,7 @@ import requests
 username = os.environ['SLIPSTREAM_USERNAME']
 password = os.environ['SLIPSTREAM_PASSWORD']
 
-moth_range = range(1, 13)
+month_range = range(1, 13)
 clouds = ["ifb-bird-stack", "ifb-bistro-iphc", "ifb-core-pilot",
           "ifb-genouest-genostack", "ifb-prabi-girofle"]
 
@@ -31,7 +31,7 @@ def login():
     return r.cookies
 
 
-def process_respose(resp):
+def process_response(resp):
     metrics = {}
     users = set()
     for entry in resp['usages']:
@@ -53,7 +53,7 @@ def cloud_loop(month):
         print('   with url: %s' % url)
         response = requests.get(url, cookies=cookies)
         test_response_raise(response, "Error getting usage: " + response.text)
-        clouds_metrics[cloud] = process_respose(response.json())
+        clouds_metrics[cloud] = process_response(response.json())
     return clouds_metrics
 
 
@@ -91,14 +91,14 @@ def pad_filename(f):
 
 
 def months_loop():
-    for m in moth_range:
+    for m in month_range:
         print('Processing for month: %s...' % calendar.month_name[m])
         clouds_metrics = cloud_loop(m)
         format(clouds_metrics, "metrics-%s.csv" % pad_filename(m))
 
 
 def merge_files():
-    filenames = map(lambda m: 'metrics-%s.csv' % pad_filename(m), moth_range)
+    filenames = map(lambda m: 'metrics-%s.csv' % pad_filename(m), month_range)
     with open('metrics.csv', 'w') as o:
         for filename in filenames:
             with open(filename) as infile:
