@@ -15,18 +15,18 @@ from slipstream.api import Api
 # b) complete weeks (this month)
 
 #
-## Inputs
+# Inputs
 #
 
 year = 2017
-months_range = range(6, 8) # range(1, 13) ## for the entire year
+months_range = range(6, 8)  # range(1, 13) ## for the entire year
 
 clouds = {"exoscale-ch-gva", "exoscale-ch-dk", "open-telekom-de1"}
 #organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "ESRF", "KIT", "STFC", "SURFSara"}
 organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "KIT", "SURFSara"}
 
 #
-## Constants
+# Constants
 #
 
 username = os.environ['SLIPSTREAM_USERNAME']
@@ -45,7 +45,7 @@ url_login = "https://nuv.la/auth/login"
 cookies = None
 
 #
-## Functions
+# Functions
 #
 
 
@@ -64,7 +64,7 @@ def build_request_data(frequency, month_start, users, clouds):
 
 
 def get_month_end(start):
-    return 1 if start >= 12 else start+1 
+    return 1 if start >= 12 else start+1
 
 
 def test_response_raise(response, message):
@@ -83,12 +83,13 @@ def reduce(resp, group_by, include_all):
     # For example: group_by=user, include_all=cloud
     # each entry (line at the end) correspond to a user, aggregating all clouds
     # return a set, with each entry corresponding to the group_by field
-    metrics = {} # 1 entry per group_by
+    metrics = {}  # 1 entry per group_by
     for entry in resp['usages']:
         group_by_value = entry[group_by]
         include_all_value = entry[include_all]
-        #print("grouping by %s = %s" % (group_by, group_by_value))
-        metrics[group_by_value] = metrics.get(group_by_value, {include_all: set()})
+        # print("grouping by %s = %s" % (group_by, group_by_value))
+        metrics[group_by_value] = metrics.get(group_by_value,
+                                              {include_all: set()})
         metrics[group_by_value][include_all].add(include_all_value)
         for metric_name, metrics_value in entry['usage'].iteritems():
             for k, v in metrics_value.iteritems():
@@ -117,7 +118,7 @@ def convert(metric, value):
     if 'disk' == metric:
         return value / 60  # / 1024 # return GB-hour from GB-minutes
     try:
-        return value / 60 # return per minute??!
+        return value / 60  # return per minute??!
     except(TypeError):
         return value
 
@@ -129,7 +130,8 @@ def format(clouds_metrics, group_by, include_all, filename):
         return
     with open(filename, 'w') as f:
         f.write("%s, VM (hours), CPU (hours), RAM (GB-hours), "
-                "Disk (GB-hours), Included %ss\n" % (group_by.title(), include_all.title()))
+                "Disk (GB-hours), Included %ss\n" % (group_by.title(),
+                                                     include_all.title()))
         for group in clouds_metrics:
             f.write("%s, " % group)
             for c in columns:
@@ -153,7 +155,7 @@ def process_for_month(frequency, month_start, organization, users, clouds):
     #print("data:", data)
     response = get_metrics(url_usage, data)
     # First reduce for all users, then for all clouds
-    for group_by, include_all in [["user", "cloud"], ["cloud", "user"]]: # group_by, include_all
+    for group_by, include_all in [["user", "cloud"], ["cloud", "user"]]:
         clouds_metrics = reduce(response, group_by, include_all)
         filename = filename_template.format(
             year=year,
@@ -193,20 +195,13 @@ def process_usage(organization, users, clouds):
         process_for_month(frequency, m, organization, users, clouds)
 
 
-# def merge_files():
-#     filenames = map(lambda m: 'metrics-%s.csv' % pad_filename(m), months_range)
-#     with open('metrics.csv', 'w') as o:
-#         for filename in filenames:
-#             with open(filename) as infile:
-#                 o.write('filename: %s\n' % filename)
-#                 o.write(infile.read())
-
-# Compute the following usage aggregation:
-# - for all given users, all given clouds
-# - for all given clouds, all given users
-# - for all given user and cloud
-# a) complete months (from given range)
-# b) complete weeks (this month)
+def merge_files():
+    filenames = map(lambda m: 'metrics-%s.csv' % pad_filename(m), months_range)
+    with open('metrics.csv', 'w') as o:
+        for filename in filenames:
+            with open(filename) as infile:
+                o.write('filename: %s\n' % filename)
+                o.write(infile.read())
 
 def get_users_by_organisation(all_users, organizations):
     users_by_org = {}
