@@ -4,7 +4,9 @@ from __future__ import print_function
 import os
 from datetime import datetime
 import calendar
+import itertools
 import requests
+from slipstream.api import Api
 
 # Compute the following usage aggregation:
 # - group by all input user, all measurements for all input clouds
@@ -19,10 +21,9 @@ import requests
 year = 2017
 months_range = range(6, 8) # range(1, 13) ## for the entire year
 
-clouds = ["exoscale-ch-gva", "exoscale-ch-dk", "open-telekom-de1"]
-users = ["meb", "test"]
-# clouds = ["exoscale-ch-gva"]
-# users = ["meb"]
+clouds = {"exoscale-ch-gva", "exoscale-ch-dk", "open-telekom-de1"}
+#organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "ESRF", "KIT", "STFC", "SURFSara"}
+organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "KIT", "SURFSara"}
 
 #
 ## Constants
@@ -31,13 +32,13 @@ users = ["meb", "test"]
 username = os.environ['SLIPSTREAM_USERNAME']
 password = os.environ['SLIPSTREAM_PASSWORD']
 
-filename_template = "metrics--{year}-{month}--{detail}.csv"
+filename_template = "metrics--{year}-{month}--{organization}--{detail}.csv"
 
-url_template_base = "https://nuv.la/api/usage?$filter=frequency='{frequency}' " \
-                    "and start-timestamp>={year}-{month_start}-01 " \
-                    "and end-timestamp<={year}-{month_end}-01"
+url_usage = "https://nuv.la/api/usage"
 
-body_template = "..."
+body_template_base = "frequency='{frequency}' " \
+                     "and start-timestamp>={year}-{month_start}-01 " \
+                     "and end-timestamp<={year}-{month_end}-01"
 
 url_login = "https://nuv.la/auth/login"
 
@@ -48,18 +49,18 @@ cookies = None
 #
 
 
-def _build_query(users, clouds):
-    users_query_fragment = " or ".join(map(lambda x: "user='%s'" % x, users))
+def _build_request_data_query(users, clouds):
+    users_query_fragment = " or ".join(map(lambda x: "user='%s'" % x.username, users))
     clouds_query_fragment = " or ".join(map(lambda x: "cloud='%s'" % x, clouds))
-    query = url_template_base + " and (%s) and (%s)" % (users_query_fragment, clouds_query_fragment)    
-    return query
+    body = body_template_base + " and (%s) and (%s)" % (users_query_fragment, clouds_query_fragment)    
+    return body
 
 
-def build_query(frequency, month_start):
-    return _build_query(users,clouds).format(frequency=frequency,
-                                      month_start=month_start,
-                                      month_end=get_month_end(month_start),
-                                      year=year)
+def build_request_data(frequency, month_start, users, clouds):
+    return {"$filter":_build_request_data_query(users,clouds).format(frequency=frequency,
+                                                                     month_start=month_start,
+                                                                     month_end=get_month_end(month_start),
+                                                                     year=year)}
 
 
 def get_month_end(start):
@@ -100,9 +101,12 @@ def reduce(resp, group_by, include_all):
     return metrics
 
 
-def get_metrics(url):
-    print('   Getting metrics with url: %s' % url)
-    response = requests.get(url, cookies=cookies)
+def get_metrics(url, data):
+    print('        Getting metrics with url: %s' % url)
+    print('        and body: %s' % data)
+#    data = {'$filter': "frequency='monthly' and start-timestamp>=2017-6-01 and end-timestamp<=2017-7-01 and (user='meb')"}
+    response = requests.put(url, data=data, cookies=cookies)
+#    print(response.json())
     test_response_raise(response, "Error getting usage: " + response.text)
     return response.json()
 
@@ -120,6 +124,9 @@ def convert(metric, value):
 
 def format(clouds_metrics, group_by, include_all, filename):
     columns = ["vm", "cpu", "ram", "disk", include_all]
+    if not clouds_metrics:
+        print("        >>> Warning... no metrics found!")
+        return
     with open(filename, 'w') as f:
         f.write("%s, VM (hours), CPU (hours), RAM (GB-hours), "
                 "Disk (GB-hours), Included %ss\n" % (group_by.title(), include_all.title()))
@@ -141,20 +148,22 @@ def pad_filename(f):
     return str(f).zfill(2)
 
 
-def process_for_month(frequency, month_start):
-    url = build_query(frequency, month_start)
-    response = get_metrics(url)
+def process_for_month(frequency, month_start, organization, users, clouds):
+    data = build_request_data(frequency, month_start, users, clouds)
+    #print("data:", data)
+    response = get_metrics(url_usage, data)
     # First reduce for all users, then for all clouds
     for group_by, include_all in [["user", "cloud"], ["cloud", "user"]]: # group_by, include_all
         clouds_metrics = reduce(response, group_by, include_all)
         filename = filename_template.format(
             year=year,
             month=pad_filename(month_start),
+            organization=organization,
             detail="by-%s" % group_by)
         format(clouds_metrics, group_by, include_all, filename)
 
 
-def processing_loop():
+def process_usage(organization, users, clouds):
     _months_range = months_range
     this_month = datetime.now().month
     use_weekly = True if this_month == months_range[-1] else False
@@ -162,18 +171,26 @@ def processing_loop():
     if use_weekly:
         _months_range = months_range[:-1]
 
+    print("users",users)
+
+    print('Processing usage for organization %s, including the following users:' % organization)
+    map(print,["    - %s %s %s" % (u.first_name,
+                                   u.last_name,
+                                   (u.username[:50] + '...') if len(u.username) > 50 else u.username)
+               for u in users])
+
     frequency = 'monthly'
     for m in _months_range:
-        print('Processing for month: %s...' % (calendar.month_name[m]))
+        print('    Processing for month: %s...' % (calendar.month_name[m]))
         frequency = 'monthly'
-        process_for_month(frequency, m)
+        process_for_month(frequency, m, organization, users, clouds)
 
     if use_weekly:
-        # Process last month as weekly, assuming it is not complete
+        # Process last month as weekly since we don't have a complete month
         m = months_range[-1]
-        print('Processing current month using weekly summary: %s...' % (calendar.month_name[m]))
+        print('    Processing current month using weekly summary: %s...' % (calendar.month_name[m]))
         frequency = 'weekly'
-        process_for_month(frequency, m)
+        process_for_month(frequency, m, organization, users, clouds)
 
 
 # def merge_files():
@@ -191,6 +208,47 @@ def processing_loop():
 # a) complete months (from given range)
 # b) complete weeks (this month)
 
+def get_users_by_organisation(all_users, organizations):
+    users_by_org = {}
+    for o in organizations:
+        users_by_org[o] = filter(lambda u: u.organization == o, all_users)
+    return users_by_org
+
+def get_all_users(api):
+    api.login(username, password)
+    return list(api.list_users())
+
+def extract_organizations(users):
+    return sorted(set(map(lambda u: u.__getattribute__("organization"), users)))
+
+def get_all_filtered_users(users_by_org):
+    all_filtered_users = list(itertools.chain(users_by_org.values()))
+    all_filtered_users_flattened = [val for sublist in all_filtered_users for val in sublist]
+    return all_filtered_users_flattened
+    
+def main():
+    api = Api()
+    all_users = get_all_users(api)
+    
+    # Check that the orgaisations we have defined exists (i.e. users have declared being part of them)
+    orgs = extract_organizations(all_users)
+    unknown_org = organizations.difference(orgs)
+    if unknown_org:
+        print(">>> Error, the following organizations are not used by any user:", ", ".join(unknown_org))
+        return
+    
+    users_by_org = get_users_by_organisation(all_users, organizations)
+
+    print("Processing usage for clouds:", ", ".join(clouds))
+
+    for org in users_by_org:
+        process_usage(org, users_by_org[org], clouds)
+
+    all_filtered_users = get_all_filtered_users(users_by_org)
+
+    # All users from all organizations
+    process_usage("all", all_filtered_users, clouds)
+    
+        
 cookies = login()
-processing_loop()
-#merge_files()
+main()
