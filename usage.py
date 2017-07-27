@@ -98,7 +98,7 @@ def reduce(resp, group_by, include_all):
                 metrics[group_by_value][metric_name] = metric
     # pretty print the set of include_all
     for m in metrics:
-        metrics[m][include_all] = ", ".join(metrics[m][include_all])
+        metrics[m][include_all] = "; ".join(metrics[m][include_all])
     return metrics
 
 
