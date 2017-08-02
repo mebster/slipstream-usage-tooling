@@ -12,18 +12,19 @@ from slipstream.api import Api
 # - group by all input user, all measurements for all input clouds
 # - group by all input cloud, all measurements for all input users
 # a) complete months (from given range)
-# b) complete weeks (this month)
+# b) complete weeks or days (this month)
 
 #
 # Inputs
 #
 
 year = 2017
-months_range = range(6, 8)  # range(1, 13) ## for the entire year
+months_range = range(6, 9)  # range(1, 13) ## for the entire year
 
 clouds = {"exoscale-ch-gva", "exoscale-ch-dk", "open-telekom-de1"}
-#organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "ESRF", "KIT", "STFC", "SURFSara"}
-organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "KIT", "SURFSara"}
+organizations = {"CERN", "DESY", "CNRS", "INFN", "EMBL", "IFAE", "ESRF", "KIT", "STFC", "SURFSara", "SixSq", "RHEA"}
+
+users_blacklist = {"sixsq_prod", "test", "sixsq_ci", "sixsq_dev"}
 
 #
 # Constants
@@ -87,7 +88,6 @@ def reduce(resp, group_by, include_all):
     for entry in resp['usages']:
         group_by_value = entry[group_by]
         include_all_value = entry[include_all]
-        # print("grouping by %s = %s" % (group_by, group_by_value))
         metrics[group_by_value] = metrics.get(group_by_value,
                                               {include_all: set()})
         metrics[group_by_value][include_all].add(include_all_value)
@@ -103,11 +103,9 @@ def reduce(resp, group_by, include_all):
 
 
 def get_metrics(url, data):
-    print('        Getting metrics with url: %s' % url)
-    print('        and body: %s' % data)
-#    data = {'$filter': "frequency='monthly' and start-timestamp>=2017-6-01 and end-timestamp<=2017-7-01 and (user='meb')"}
+    # print('        Getting metrics with url: %s' % url)
+    # print('        and body: %s' % data)
     response = requests.put(url, data=data, cookies=cookies)
-#    print(response.json())
     test_response_raise(response, "Error getting usage: " + response.text)
     return response.json()
 
@@ -132,17 +130,20 @@ def format(clouds_metrics, group_by, include_all, filename):
         f.write("%s, VM (hours), CPU (hours), RAM (GB-hours), "
                 "Disk (GB-hours), Included %ss\n" % (group_by.title(),
                                                      include_all.title()))
-        for group in clouds_metrics:
-            f.write("%s, " % group)
+        for username in clouds_metrics:
+            f.write("%s, " % username)
             for c in columns:
-                cm = clouds_metrics[group][c]
-                if isinstance(cm, dict):
-                    value = cm[u'unit-minutes']
-                else:
-                    value = cm
-                f.write("%s" % convert(c, value))
-                if c != columns[-1]:
-                    f.write(", ")
+                try:
+                    cm = clouds_metrics[username][c]
+                    if isinstance(cm, dict):
+                        value = cm[u'unit-minutes']
+                    else:
+                        value = cm
+                    f.write("%s" % convert(c, value))
+                    if c != columns[-1]:
+                        f.write(", ")
+                except KeyError, err:
+                    print("        >>> Warning, missing key %s for user %s" % (err, username))
             f.write("\n")
 
 
@@ -152,7 +153,6 @@ def pad_filename(f):
 
 def process_for_month(frequency, month_start, organization, users, clouds):
     data = build_request_data(frequency, month_start, users, clouds)
-    #print("data:", data)
     response = get_metrics(url_usage, data)
     # First reduce for all users, then for all clouds
     for group_by, include_all in [["user", "cloud"], ["cloud", "user"]]:
@@ -168,13 +168,14 @@ def process_for_month(frequency, month_start, organization, users, clouds):
 def process_usage(organization, users, clouds):
     _months_range = months_range
     this_month = datetime.now().month
-    use_weekly = True if this_month == months_range[-1] else False
+    use_short_period = True if this_month == months_range[-1] else False
 
-    if use_weekly:
+    if use_short_period:
         _months_range = months_range[:-1]
 
-    print("users",users)
-
+    if not users:
+        print('    >>> Warning, no users')
+        return
     print('Processing usage for organization %s, including the following users:' % organization)
     map(print,["    - %s %s %s" % (u.first_name,
                                    u.last_name,
@@ -187,11 +188,11 @@ def process_usage(organization, users, clouds):
         frequency = 'monthly'
         process_for_month(frequency, m, organization, users, clouds)
 
-    if use_weekly:
+    if use_short_period:
         # Process last month as weekly since we don't have a complete month
         m = months_range[-1]
-        print('    Processing current month using weekly summary: %s...' % (calendar.month_name[m]))
-        frequency = 'weekly'
+        frequency = 'daily'
+        print('    Processing current month using %s summary: %s...' % (frequency, calendar.month_name[m]))
         process_for_month(frequency, m, organization, users, clouds)
 
 
@@ -220,6 +221,10 @@ def get_all_filtered_users(users_by_org):
     all_filtered_users = list(itertools.chain(users_by_org.values()))
     all_filtered_users_flattened = [val for sublist in all_filtered_users for val in sublist]
     return all_filtered_users_flattened
+
+def filter_not_in_users(users, not_in_list):
+    return filter(lambda u: u.username not in not_in_list, users)
+    
     
 def main():
     api = Api()
@@ -229,20 +234,22 @@ def main():
     orgs = extract_organizations(all_users)
     unknown_org = organizations.difference(orgs)
     if unknown_org:
-        print(">>> Error, the following organizations are not used by any user:", ", ".join(unknown_org))
-        return
+        print(">>> Warning, the following organizations are not used by any user:", ", ".join(unknown_org))
     
     users_by_org = get_users_by_organisation(all_users, organizations)
 
     print("Processing usage for clouds:", ", ".join(clouds))
 
     for org in users_by_org:
-        process_usage(org, users_by_org[org], clouds)
+        filtered_users = filter_not_in_users(users_by_org[org], users_blacklist)
+        process_usage(org, filtered_users, clouds)
 
-    all_filtered_users = get_all_filtered_users(users_by_org)
+    all_filtered_users = filter_not_in_users(get_all_filtered_users(users_by_org), users_blacklist)
 
     # All users from all organizations
     process_usage("all", all_filtered_users, clouds)
+    
+    print("Done :-)")
     
         
 cookies = login()
